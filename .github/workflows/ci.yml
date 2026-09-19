@@ -1,0 +1,287 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+# A new push to a branch cancels the run already in flight for it. Reviewing
+# results from a superseded commit wastes runner time and attention.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  NL2SQL_ENV: test
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Fast feedback on one interpreter, so a formatting mistake does not wait
+  # for the whole matrix.
+  # -------------------------------------------------------------------------
+  quality:
+    name: Style, lint and types
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: House style
+        run: python scripts/check_style.py
+
+      - name: Lint
+        run: ruff check src tests scripts migrations
+
+      - name: Format check
+        run: ruff format --check src tests scripts migrations
+
+      - name: Type check
+        run: mypy src/nl2sql
+
+  # -------------------------------------------------------------------------
+  # The offline suite across supported interpreters.
+  # -------------------------------------------------------------------------
+  test:
+    name: Tests on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Unit tests
+        run: pytest tests/unit -q
+
+      - name: Security and SQL validation tests
+        run: pytest tests/security tests/sql_validation -q
+
+      - name: Integration tests
+        run: pytest tests/integration -q
+
+      - name: API tests
+        run: pytest tests/api -q
+
+      - name: Evaluation tests
+        run: pytest tests/evaluation -q
+
+      - name: Coverage
+        if: matrix.python-version == '3.12'
+        run: pytest --cov=src/nl2sql --cov-report=xml --cov-report=term
+
+      - name: Upload coverage
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          retention-days: 7
+
+  # -------------------------------------------------------------------------
+  # The real dialect. SQLite proves the pipeline; only SQL Server proves the
+  # T-SQL path, the ODBC driver and the reflection queries used in Azure.
+  # -------------------------------------------------------------------------
+  sqlserver:
+    name: SQL Server integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: ${{ secrets.CI_SQL_PASSWORD || 'CiRunner_Password1' }}
+          MSSQL_PID: Developer
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 30s
+    env:
+      SA_PASSWORD: ${{ secrets.CI_SQL_PASSWORD || 'CiRunner_Password1' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install the ODBC driver
+        run: |
+          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/22.04/prod jammy main" \
+            | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Create the demonstration schema
+        env:
+          TARGET_URL: "mssql+pyodbc://sa:${{ secrets.CI_SQL_PASSWORD || 'CiRunner_Password1' }}@localhost:1433/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+        run: python scripts/seed_demo_database.py --url "$TARGET_URL" --schema dbo
+
+      - name: Discover the schema through the real dialect
+        env:
+          NL2SQL_ENV: development
+          NL2SQL_DATABASE__URL: "mssql+pyodbc://sa:${{ secrets.CI_SQL_PASSWORD || 'CiRunner_Password1' }}@localhost:1433/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+          NL2SQL_SECURITY__ALLOWED_SCHEMAS: '["dbo"]'
+          NL2SQL_LLM__AZURE_OPENAI__ENABLED: "false"
+          NL2SQL_LLM__LOCAL__ENABLED: "false"
+        run: python -m nl2sql.cli schema
+
+      - name: Live Azure SQL tests against the service container
+        env:
+          NL2SQL_ENV: development
+          NL2SQL_DATABASE__URL: "mssql+pyodbc://sa:${{ secrets.CI_SQL_PASSWORD || 'CiRunner_Password1' }}@localhost:1433/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+          NL2SQL_SECURITY__ALLOWED_SCHEMAS: '["dbo"]'
+          NL2SQL_LLM__AZURE_OPENAI__ENABLED: "false"
+          NL2SQL_LLM__LOCAL__ENABLED: "false"
+        run: pytest tests/live -q -m live_azure_sql -k "reachable or discovered"
+
+  # -------------------------------------------------------------------------
+  # Migrations must apply, reverse and match the models.
+  # -------------------------------------------------------------------------
+  migrations:
+    name: Migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NL2SQL_ENV: development
+      NL2SQL_APP_DATABASE__URL: "sqlite:///./data/ci.db"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Confirm the models and the migrations agree
+        run: alembic check
+
+      - name: Confirm migrations reverse
+        run: |
+          alembic downgrade base
+          alembic upgrade head
+
+  # -------------------------------------------------------------------------
+  # The image must build and the application must start inside it.
+  # -------------------------------------------------------------------------
+  container:
+    name: Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [quality]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          load: true
+          tags: nl2sql-assistant:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Confirm the application starts inside the image
+        run: |
+          docker run --rm -d --name nl2sql-ci \
+            -e NL2SQL_ENV=development \
+            -e NL2SQL_DATABASE__URL=sqlite:///./data/ci.db \
+            -e NL2SQL_APP_DATABASE__URL=sqlite:///./data/ci-app.db \
+            -e NL2SQL_LLM__AZURE_OPENAI__ENABLED=false \
+            -e NL2SQL_LLM__LOCAL__ENABLED=false \
+            -p 8000:8000 nl2sql-assistant:ci
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/api/v1/health; then
+              echo "the application is serving"
+              docker rm -f nl2sql-ci
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "the application did not become healthy"
+          docker logs nl2sql-ci
+          docker rm -f nl2sql-ci
+          exit 1
+
+  # -------------------------------------------------------------------------
+  # Dependency and source scanning. Advisory on a pull request, so a new
+  # advisory against a transitive dependency does not block unrelated work.
+  # -------------------------------------------------------------------------
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" pip-audit
+
+      - name: Audit dependencies
+        run: pip-audit --strict || true
+
+      - name: Scan source for insecure patterns
+        run: ruff check --select S src/nl2sql

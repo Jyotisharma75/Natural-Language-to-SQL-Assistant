@@ -1,0 +1,82 @@
+# Production overrides.
+#
+# Fails closed. Two settings must be supplied by the deployment and have no
+# safe default:
+#
+#   NL2SQL_SECURITY__ALLOWED_SCHEMAS   for example '["dbo","reporting"]'
+#   NL2SQL_DATABASE__SERVER, NL2SQL_DATABASE__DATABASE and the credential
+#
+# The settings model refuses to start in production when the schema allowlist
+# is empty or when API authentication is disabled, so a misconfigured deploy
+# stops at startup rather than serving unrestricted queries.
+
+database:
+  # Entra ID with a managed identity, so there is no database password to
+  # rotate, leak or find in a log.
+  auth_mode: entra_managed_identity
+  encrypt: true
+  trust_server_certificate: false
+  application_intent_read_only: true
+  pool_size: 10
+  max_overflow: 10
+
+app_database:
+  url_secret: NL2SQL_APP_DATABASE_URL
+
+schema_cache:
+  ttl_seconds: 1800
+  warm_on_startup: true
+
+security:
+  allowed_statements: ["SELECT"]
+  allowed_schemas: []
+  allow_select_star: false
+  allow_system_catalogs: false
+  allow_cross_database: false
+  prompt_injection:
+    enabled: true
+    action: reject
+
+limits:
+  max_rows: 1000
+  max_execution_seconds: 30
+  max_result_bytes: 5000000
+  max_joins: 6
+  max_tables: 8
+
+cost_estimation:
+  enabled: true
+  max_estimated_cost: 50.0
+
+observability:
+  log_level: INFO
+  log_format: json
+  mask_sql_literals: true
+  audit_enabled: true
+  metrics_endpoint_enabled: true
+
+api:
+  auth_mode: api_key
+  docs_enabled: false
+  rate_limit_per_minute: 60
+  cors_origins: []
+
+llm:
+  azure_openai:
+    enabled: true
+    use_managed_identity: true
+    timeout_seconds: 45
+  local:
+    # Disabled by default in production: a CPU only container running a local
+    # model adds latency and memory for every replica. Enable it, with a sized
+    # node and a warm cache, when questions must stay on the cluster.
+    enabled: false
+    preload: true
+
+routing:
+  dry_run_enabled: true
+  escalate_on_failure: true
+
+conversation:
+  store: sqlalchemy
+  enabled: true

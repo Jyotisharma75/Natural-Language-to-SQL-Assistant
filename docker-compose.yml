@@ -1,0 +1,66 @@
+# Local development stack.
+#
+# SQL Server stands in for Azure SQL. It is the same engine and the same
+# T-SQL dialect, so schema discovery, validation and execution behave as they
+# will in Azure. Azure OpenAI is still remote: put its endpoint and key in
+# .env, or disable it and enable the local model instead.
+#
+#   docker compose up --build
+#   docker compose run --rm api python scripts/seed_demo_database.py \
+#       --url "mssql+pyodbc://sa:$SA_PASSWORD@sqlserver:1433/nl2sql?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${SA_PASSWORD:-LocalDev_Password1}
+      MSSQL_PID: Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        EXTRAS: ${EXTRAS:-}
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      NL2SQL_ENV: development
+      NL2SQL_DATABASE__SERVER: sqlserver
+      NL2SQL_DATABASE__DATABASE: ${NL2SQL_DATABASE__DATABASE:-master}
+      NL2SQL_DATABASE__USERNAME: sa
+      NL2SQL_DATABASE__TRUST_SERVER_CERTIFICATE: "true"
+      NL2SQL_DATABASE__APPLICATION_INTENT_READ_ONLY: "false"
+      NL2SQL_DB_PASSWORD: ${SA_PASSWORD:-LocalDev_Password1}
+      NL2SQL_APP_DATABASE__URL: sqlite:///./data/nl2sql_app.db
+      # Azure OpenAI, when you have it. Otherwise set
+      # NL2SQL_LLM__AZURE_OPENAI__ENABLED=false and build with EXTRAS=local.
+      NL2SQL_LLM__AZURE_OPENAI__ENDPOINT: ${NL2SQL_LLM__AZURE_OPENAI__ENDPOINT:-}
+      NL2SQL_LLM__AZURE_OPENAI__DEPLOYMENT: ${NL2SQL_LLM__AZURE_OPENAI__DEPLOYMENT:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - app-data:/app/data
+      - model-cache:/var/lib/nl2sql/models
+
+volumes:
+  sqlserver-data:
+  app-data:
+  model-cache:

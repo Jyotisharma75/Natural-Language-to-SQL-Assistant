@@ -1,0 +1,34 @@
+# Development overrides.
+#
+# Readable logs, an open API surface for local work, and a short schema cache
+# so a schema change shows up without a restart.
+
+schema_cache:
+  ttl_seconds: 60
+  warm_on_startup: false
+
+observability:
+  log_level: DEBUG
+  log_format: console
+
+api:
+  # Permitted only outside production. The settings model rejects this value
+  # when the environment is production.
+  auth_mode: none
+  anonymous_tenant_id: null
+  docs_enabled: true
+  rate_limit_per_minute: 0
+
+limits:
+  max_rows: 200
+  max_execution_seconds: 20
+
+cost_estimation:
+  enabled: false
+
+llm:
+  azure_openai:
+    enabled: true
+  local:
+    enabled: true
+    preload: false

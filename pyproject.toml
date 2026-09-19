@@ -1,0 +1,148 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nl2sql-assistant"
+version = "1.0.0"
+description = "Enterprise natural language to SQL assistant for Azure SQL with Azure OpenAI and local model routing"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Data Platform Engineering" }]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Framework :: FastAPI",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "sqlalchemy>=2.0.35",
+    "alembic>=1.13",
+    "pyodbc>=5.1",
+    "sqlglot>=26",
+    "openai>=1.50",
+    "azure-identity>=1.17",
+    "structlog>=24.4",
+    "tenacity>=9.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "defusedxml>=0.7",
+]
+
+[project.optional-dependencies]
+# Local Hugging Face inference for the router and verifier. Large download.
+local = [
+    "torch>=2.4",
+    "transformers>=4.45",
+    "accelerate>=0.34",
+]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "httpx>=0.27",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-pyyaml>=6.0",
+    "types-defusedxml>=0.7",
+    "pre-commit>=3.8",
+]
+
+[project.scripts]
+nl2sql = "nl2sql.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nl2sql"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/nl2sql", "configs", "prompts", "migrations", "README.md"]
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "N", "S", "A", "RET", "SIM", "PTH", "RUF", "ASYNC"]
+ignore = [
+    "S101",   # assert is used in tests
+    "B008",   # FastAPI Depends in defaults is the documented pattern
+    "RUF012", # mutable class attributes on pydantic models are fine
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108", "S311", "S608"]
+"scripts/**" = ["S311", "S603", "S607"]
+# Fields named *_secret hold the NAME of an environment variable, never a value.
+"src/nl2sql/config/settings.py" = ["S105"]
+"migrations/**" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["nl2sql"]
+
+# ---------------------------------------------------------------------------
+# MyPy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+packages = ["nl2sql"]
+strict = true
+warn_unreachable = true
+warn_unused_ignores = false
+show_error_codes = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = [
+    "torch.*",
+    "transformers.*",
+    "accelerate.*",
+    "pyodbc.*",
+    "azure.*",
+    "sqlglot.*",
+]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["--strict-markers", "-ra"]
+markers = [
+    "unit: fast isolated tests",
+    "security: attack corpus and isolation tests",
+    "sql_validation: SQL validator allow and deny tables",
+    "integration: full pipeline over the test database abstraction",
+    "api: HTTP surface tests",
+    "evaluation: evaluation framework tests",
+    "live_azure_sql: requires a reachable Azure SQL database",
+    "live_azure_openai: requires an Azure OpenAI deployment",
+    "local_model: downloads and runs the local Hugging Face model",
+]
+
+[tool.coverage.run]
+source = ["src/nl2sql"]
+branch = true
+
+[tool.coverage.report]
+skip_empty = true
+show_missing = true
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "@overload"]

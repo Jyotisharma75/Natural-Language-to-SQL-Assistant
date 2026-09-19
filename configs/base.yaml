@@ -1,0 +1,383 @@
+# Base configuration.
+#
+# Defaults that are not specific to one deployment. Environment files override
+# these, and NL2SQL_ environment variables override both. Nothing here names a
+# business table, metric or query: the schema is discovered at runtime.
+
+app:
+  name: nl2sql-assistant
+  version: "1.0.0"
+
+# The database questions are answered from. Connection details come from the
+# environment, because they differ per deployment and carry credentials.
+database:
+  driver: "ODBC Driver 18 for SQL Server"
+  port: 1433
+  auth_mode: sql_password
+  password_secret: NL2SQL_DB_PASSWORD
+  encrypt: true
+  trust_server_certificate: false
+  login_timeout_seconds: 30
+  application_intent_read_only: true
+  pool_size: 5
+  max_overflow: 5
+  pool_recycle_seconds: 1800
+  pool_pre_ping: true
+
+# Application owned tables: audit and conversation history.
+app_database:
+  url: "sqlite:///./data/nl2sql_app.db"
+  echo: false
+
+schema_cache:
+  ttl_seconds: 900
+  include_views: true
+  include_indexes: true
+  serve_stale_on_error: true
+  warm_on_startup: true
+
+security:
+  # Read only by default. Adding a statement here is the only way to enable it.
+  allowed_statements: ["SELECT"]
+  # Empty means every non system schema the login can see. Production must set
+  # this explicitly; the settings model enforces that.
+  allowed_schemas: []
+  system_schemas:
+    - sys
+    - INFORMATION_SCHEMA
+    - guest
+    - db_owner
+    - db_accessadmin
+    - db_securityadmin
+    - db_ddladmin
+    - db_backupoperator
+    - db_datareader
+    - db_datawriter
+    - db_denydatareader
+    - db_denydatawriter
+  blocked_tables: []
+  # Column name patterns that are never described to a model and never
+  # returned. Matched against schema.table.column, case insensitively.
+  blocked_columns:
+    - "*password*"
+    - "*passwd*"
+    - "*secret*"
+    - "*api_key*"
+    - "*apikey*"
+    - "*access_token*"
+    - "*refresh_token*"
+    - "*private_key*"
+    - "*ssn*"
+    - "*social_security*"
+    - "*credit_card*"
+    - "*card_number*"
+    - "*cvv*"
+  # Columns that may be queried but whose values are masked in results.
+  masked_columns: []
+  mask_token: "***"
+  blocked_functions:
+    - OPENROWSET
+    - OPENQUERY
+    - OPENDATASOURCE
+    - OPENXML
+    - XP_CMDSHELL
+    - SP_EXECUTESQL
+    - PWDENCRYPT
+    - PWDCOMPARE
+    - DECRYPTBYKEY
+    - DECRYPTBYPASSPHRASE
+    - SUSER_SNAME
+    - SUSER_NAME
+    - CURRENT_USER
+    - SESSION_USER
+    - SYSTEM_USER
+  blocked_keywords:
+    - INSERT
+    - UPDATE
+    - DELETE
+    - DROP
+    - ALTER
+    - TRUNCATE
+    - CREATE
+    - MERGE
+    - EXEC
+    - EXECUTE
+    - GRANT
+    - REVOKE
+    - DENY
+    - BACKUP
+    - RESTORE
+    - SHUTDOWN
+    - RECONFIGURE
+    - DBCC
+    - KILL
+    - WAITFOR
+    - BULK
+    - OPENROWSET
+    - OPENQUERY
+    - OPENDATASOURCE
+  blocked_identifier_prefixes:
+    - "XP_"
+    - "SP_"
+  allow_select_star: false
+  allow_system_catalogs: false
+  allow_cross_database: false
+  allow_cross_join: false
+  allow_variables: false
+  allow_temp_tables: false
+  max_sql_chars: 20000
+  prompt_injection:
+    enabled: true
+    action: reject
+    patterns:
+      ignore_instructions: "(?i)\\b(ignore|disregard|forget|override)\\b[^.]{0,60}\\b(previous|prior|above|earlier|all|your)\\b[^.]{0,60}\\b(instruction|rule|prompt|direction)"
+      role_override: "(?i)\\b(you are now|act as|pretend to be|from now on you|developer mode|jailbreak|dan mode)\\b"
+      system_prompt_disclosure: "(?i)\\b(reveal|show|print|repeat|output)\\b[^.]{0,40}\\b(system prompt|your prompt|your instructions|the instructions)\\b"
+      sql_injection_payload: "(?i)(;\\s*(drop|delete|insert|update|alter|truncate|exec|execute|merge|create)\\b)|(\\bunion\\s+(all\\s+)?select\\b)|(\\bxp_\\w+)|(\\bexec(ute)?\\s*\\()|(--\\s*$)|(/\\*.*\\*/)"
+      catalogue_exfiltration: "(?i)\\b(information_schema|sysobjects|syscolumns|sys\\.(tables|columns|databases|objects))\\b"
+      credential_hunting: "(?i)\\b(list|dump|export|show|give me)\\b[^.]{0,40}\\b(all\\s+)?(password|credential|api key|secret|token)s?\\b"
+
+limits:
+  max_rows: 1000
+  max_execution_seconds: 30
+  max_result_bytes: 5000000
+  max_cell_chars: 4000
+  max_joins: 6
+  max_subquery_depth: 3
+  max_tables: 8
+  max_question_chars: 1000
+
+cost_estimation:
+  enabled: false
+  max_estimated_cost: 50.0
+  timeout_seconds: 10.0
+
+# Multi tenant isolation. Disabled by default because it requires knowing
+# which column carries the tenant, which is a property of the schema.
+tenancy:
+  enabled: false
+  tenant_column_patterns: []
+  require_tenant: true
+  session_context_key: null
+
+execution:
+  # Substrings matched against the driver error text. Azure SQL reports
+  # transient faults with these codes.
+  transient_error_markers:
+    - "40613"
+    - "40197"
+    - "40501"
+    - "49918"
+    - "49919"
+    - "49920"
+    - "10928"
+    - "10929"
+    - "08S01"
+    - "08001"
+    - "HYT01"
+    - "is not currently available"
+    - "transport-level error"
+  timeout_error_markers:
+    - "HYT00"
+    - "timeout expired"
+    - "query timeout"
+    - "interrupted"
+    - "canceled"
+  permission_error_markers:
+    - "permission was denied"
+    - "(229)"
+    - "(230)"
+    - "(297)"
+  invalid_reference_markers:
+    - "42S02"
+    - "42S22"
+    - "invalid object name"
+    - "invalid column name"
+    - "no such table"
+    - "no such column"
+  retry:
+    max_attempts: 3
+    initial_backoff_seconds: 0.5
+    max_backoff_seconds: 6.0
+    jitter_seconds: 0.25
+  fetch_batch_size: 500
+  dry_run_timeout_seconds: 10.0
+
+llm:
+  default_provider: azure_openai
+  auxiliary_provider_preference: [local, azure_openai]
+  structured_output_repair_attempts: 1
+  azure_openai:
+    enabled: true
+    api_version: "2024-10-21"
+    api_key_secret: AZURE_OPENAI_API_KEY
+    use_managed_identity: false
+    structured_output_mode: json_schema
+    token_limit_parameter: max_tokens
+    send_temperature: true
+    temperature: 0.0
+    max_output_tokens: 1200
+    timeout_seconds: 60
+    health_probe: false
+    retry:
+      max_attempts: 3
+      initial_backoff_seconds: 1.0
+      max_backoff_seconds: 10.0
+  local:
+    enabled: true
+    model_id: "Qwen/Qwen2.5-Coder-0.5B-Instruct"
+    revision: main
+    device: cpu
+    dtype: float32
+    max_new_tokens: 512
+    temperature: 0.0
+    timeout_seconds: 180
+    trust_remote_code: false
+    max_concurrency: 1
+    preload: false
+    retry:
+      max_attempts: 1
+
+# Intelligent routing between the local model and Azure OpenAI, and the cross
+# model verification that follows generation.
+routing:
+  enabled: true
+  local_max_complexity: 0.35
+  always_verify_above_complexity: 0.7
+  verify_below_confidence: 0.75
+  local_can_verify: true
+  max_repair_attempts: 1
+  escalate_on_failure: true
+  cross_generate_on_disagreement: true
+  dry_run_enabled: true
+  table_count_saturation: 5
+  join_path_saturation: 4
+  question_length_saturation: 40
+  time_expression_saturation: 2
+  intent_complexity:
+    lookup: 0.1
+    aggregation: 0.35
+    ranking: 0.4
+    comparison: 0.65
+    trend: 0.7
+    anomaly: 0.9
+  weights:
+    table_count: 0.2
+    join_paths: 0.2
+    intent: 0.3
+    time_expressions: 0.1
+    question_length: 0.1
+    followup: 0.05
+    ambiguity: 0.05
+  selection_weights:
+    validation: 0.4
+    dry_run: 0.25
+    verifier: 0.2
+    confidence: 0.15
+
+retrieval:
+  top_k_tables: 6
+  max_tables_in_context: 10
+  max_columns_per_table: 40
+  fk_expansion_hops: 1
+  llm_table_selection_threshold: 12
+  llm_table_selection_enabled: true
+  min_score: 0.0
+  bm25_k1: 1.5
+  bm25_b: 0.75
+  table_name_weight: 3
+  prefix_match_min_chars: 5
+  prefix_match_weight: 0.5
+  # Quoted because YAML reads bare on, no and yes as booleans.
+  stopwords:
+    ["a", "an", "and", "are", "as", "at", "be", "by", "did", "do", "does",
+     "for", "from", "get", "give", "had", "has", "have", "how", "i", "in",
+     "is", "it", "many", "me", "much", "of", "on", "or", "our", "show",
+     "that", "the", "their", "there", "to", "us", "was", "we", "were",
+     "what", "when", "where", "which", "who", "with", "you", "your",
+     "list", "tell", "please", "can", "could", "would", "sql", "query",
+     "data"]
+  # Question vocabulary mapped onto words that appear in identifiers. Extend
+  # this per deployment to teach the retriever your domain language.
+  synonyms: {}
+
+intent:
+  mode: heuristic
+  default_intent: lookup
+  intent_priority: [anomaly, comparison, trend, ranking, aggregation, lookup]
+  keywords:
+    aggregation: [total, sum, average, avg, mean, count, how many, how much, aggregate, overall]
+    ranking: [highest, lowest, top, bottom, best, worst, most, least, rank, largest, smallest]
+    comparison: [compare, comparison, versus, vs, against, difference, between, relative to, breakdown by]
+    trend: [trend, over time, growth, decline, increase, decrease, month over month, year over year, since, history]
+    anomaly: [abnormal, anomaly, anomalous, unusual, outlier, spike, irregular, unexpected, suspicious]
+    lookup: [show, list, which, what, find, display]
+  time_patterns:
+    - "(?i)\\b(last|previous|past|this|current|next)\\s+(quarter|month|year|week|day|fiscal year|fy)\\b"
+    - "(?i)\\b(q[1-4])\\b"
+    - "(?i)\\b(fy\\s?\\d{2,4})\\b"
+    - "(?i)\\b(19|20)\\d{2}\\b"
+    - "(?i)\\b(january|february|march|april|may|june|july|august|september|october|november|december)\\b"
+    - "(?i)\\b(year to date|ytd|month to date|mtd|quarter to date|qtd)\\b"
+    - "(?i)\\b(between)\\b[^.]{0,40}\\b(and)\\b"
+  aggregation_words: [total, sum, average, avg, count, minimum, maximum, min, max, median, per, by]
+
+prompts:
+  directory: prompts
+  versions:
+    intent_analysis: v1
+    table_selection: v1
+    sql_generation: v1
+    sql_repair: v1
+    sql_verification: v1
+    answer_generation: v1
+    followup_rewrite: v1
+    structured_output: v1
+  untrusted_delimiters: [user_question, schema, conversation, results, sql, issues]
+
+answer:
+  enabled: true
+  provider: primary
+  send_rows_to_llm: true
+  max_rows_in_prompt: 50
+  decimal_as: float
+
+conversation:
+  enabled: true
+  store: sqlalchemy
+  stored_fields: [standalone_question, sql, tables_used]
+  max_turns: 10
+  context_turns: 3
+  ttl_seconds: 3600
+  rewrite_followups: true
+
+observability:
+  service_name: nl2sql-assistant
+  log_level: INFO
+  log_format: json
+  log_generated_sql: true
+  mask_sql_literals: true
+  sensitive_keys: []
+  mask_patterns: []
+  audit_enabled: true
+  metrics_endpoint_enabled: false
+
+api:
+  title: Natural Language to SQL Assistant
+  auth_mode: api_key
+  api_key:
+    header_name: X-API-Key
+    keys_secret: NL2SQL_API_KEYS
+  anonymous_tenant_id: null
+  cors_origins: []
+  max_request_bytes: 32768
+  rate_limit_per_minute: 60
+  expose_sql: true
+  docs_enabled: true
+  max_filters: 10
+
+evaluation:
+  float_tolerance: 0.000001
+  column_order_sensitive: false
+  use_llm_judge: false
+  reports_dir: reports

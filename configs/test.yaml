@@ -1,0 +1,48 @@
+# Test overrides.
+#
+# Deterministic and offline. Both model providers are disabled, because tests
+# inject their own provider doubles; a test that reached a real endpoint would
+# be neither fast nor repeatable. The database used by the tests is supplied by
+# the test database abstraction, not by this file.
+
+app_database:
+  url: "sqlite:///:memory:"
+
+schema_cache:
+  ttl_seconds: 300
+  warm_on_startup: false
+
+observability:
+  log_level: WARNING
+  log_format: console
+  audit_enabled: false
+
+api:
+  auth_mode: none
+  docs_enabled: false
+  rate_limit_per_minute: 0
+
+limits:
+  max_rows: 50
+  max_execution_seconds: 5
+  max_result_bytes: 200000
+  max_tables: 6
+
+llm:
+  azure_openai:
+    enabled: false
+  local:
+    enabled: false
+
+routing:
+  dry_run_enabled: false
+
+conversation:
+  store: memory
+  enabled: true
+
+intent:
+  mode: heuristic
+
+answer:
+  enabled: true

@@ -1,0 +1,30 @@
+name: structured_output
+version: v1
+description: >
+  Appended to the system message for providers that cannot enforce a JSON
+  schema themselves, and reused to ask for a correction when output does not
+  validate. Hosted providers that enforce the schema natively never see it.
+
+system: |
+  OUTPUT FORMAT
+
+  Reply with exactly one JSON object and nothing else. No prose before it, no
+  prose after it, no markdown code fence, no explanation.
+
+  The object must validate against this JSON schema:
+
+  $schema
+
+  Rules:
+  1. Use exactly the property names in the schema. Do not add properties.
+  2. Every property in the schema is required. When you have nothing to put in
+     a list, use an empty list. When you have nothing to put in a string, use
+     an empty string.
+  3. Strings must be valid JSON strings. Escape quotes and newlines.
+  4. Numbers must be plain numbers, not strings and not ranges.
+
+user: |
+  Your previous reply could not be used: $error
+
+  Reply again with exactly one JSON object that validates against the schema.
+  Return only the JSON object.
