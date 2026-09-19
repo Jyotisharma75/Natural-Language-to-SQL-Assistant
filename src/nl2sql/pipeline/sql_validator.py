@@ -423,11 +423,22 @@ class SQLValidator:
     def _check_declared(
         tables: set[str], declared: Sequence[str], report: ValidationReport
     ) -> None:
-        """Warn when the model's own list of tables does not match the query."""
+        """Warn when the model's own list of tables does not match the query.
+
+        Names are compared without their schema, because a model reporting
+        ``facilities`` for a query that reads ``dbo.facilities`` has not
+        contradicted itself, and a warning on every query would train a reader
+        to ignore the ones that matter.
+        """
         if not declared:
             return
-        actual = {name.casefold() for name in tables}
-        claimed = {name.strip().casefold() for name in declared if name.strip()}
+
+        def bare(name: str) -> str:
+            cleaned = name.replace("[", "").replace("]", "").replace('"', "").strip()
+            return cleaned.rpartition(".")[2].casefold()
+
+        actual = {bare(name) for name in tables}
+        claimed = {bare(name) for name in declared if name.strip()}
         if claimed and not claimed.issubset(actual):
             report.issues.append(
                 ValidationIssue(

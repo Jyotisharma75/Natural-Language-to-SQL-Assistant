@@ -116,6 +116,14 @@ module = [
 ]
 ignore_missing_imports = true
 
+# numpy arrives as a torch dependency when the local extra is installed. Its
+# stubs use syntax newer than this project's declared floor of 3.11, and
+# nothing here imports numpy, so its stubs are not followed.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 # ---------------------------------------------------------------------------
 # Pytest
 # ---------------------------------------------------------------------------

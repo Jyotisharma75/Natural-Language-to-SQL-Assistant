@@ -197,6 +197,18 @@ def test_declared_tables_that_do_not_match_raise_a_warning(validator, catalog):
     assert "declared_tables_mismatch" in {issue.code for issue in report.warnings}
 
 
+def test_declared_tables_without_a_schema_do_not_warn(validator, catalog):
+    """Naming the table without its schema is not a contradiction."""
+    report = validator.validate(
+        "SELECT facility_name FROM facilities",
+        catalog,
+        dialect="sqlite",
+        declared_tables=["facilities"],
+    )
+    assert report.valid is True
+    assert "declared_tables_mismatch" not in {issue.code for issue in report.warnings}
+
+
 def test_report_lists_the_tables_and_columns_read(validator, catalog):
     """The report says what the query actually touches, for the audit trail."""
     report = validator.validate(
