@@ -119,6 +119,11 @@ class HuggingFaceLocalProvider(BaseLLMProvider):
                 common["cache_dir"] = self._settings.cache_dir
 
             logger.info("local_model_loading", model_id=self._settings.model_id)
+            # The loader returns one of many architecture classes, and the
+            # methods used below are defined across that hierarchy rather than
+            # on a single declared type, so these stay dynamic.
+            tokenizer: Any
+            model: Any
             try:
                 tokenizer = AutoTokenizer.from_pretrained(self._settings.model_id, **common)
                 dtype = self._resolve_dtype(torch)
